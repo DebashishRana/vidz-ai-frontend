@@ -245,13 +245,13 @@
                             </div>
 
                             <div style="margin-bottom: 24px;">
-                                <p style="font-size: 11px; color: #9ca3af; margin: 0 0 6px 0; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">Detected Address</p>
-                                <p id="extractedAddress" style="font-size: 13px; color: #374151; margin: 0; line-height: 1.6; max-height: 100px; overflow-y: auto;">Not detected</p>
+                                <p style="font-size: 11px; color: #9ca3af; margin: 0 0 6px 0; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">Status</p>
+                                <div id="verificationStatus" style="display: inline-block; padding: 8px 14px; border-radius: 20px; font-size: 13px; font-weight: 600; background: #fee2e2; color: #dc2626;">Review Required</div>
                             </div>
 
                             <div style="margin-bottom: 24px;">
-                                <p style="font-size: 11px; color: #9ca3af; margin: 0 0 6px 0; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">Status</p>
-                                <div id="verificationStatus" style="display: inline-block; padding: 8px 14px; border-radius: 20px; font-size: 13px; font-weight: 600; background: #fee2e2; color: #dc2626;">Review Required</div>
+                                <p style="font-size: 11px; color: #9ca3af; margin: 0 0 6px 0; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">Detected Address</p>
+                                <p id="extractedAddress" style="font-size: 13px; color: #374151; margin: 0; line-height: 1.6; max-height: 100px; overflow-y: auto;">Not detected</p>
                             </div>
                         </div>
 
@@ -468,7 +468,8 @@ document.getElementById('startBtn').addEventListener('click', async () => {
 
         if (addrRes.ok) {
             const addrData = await addrRes.json();
-            if (addrData.status === 'success' && addrData.address) {
+            const addressSuccess = (addrData.status === 'success' || addrData.success === true) && !!addrData.address;
+            if (addressSuccess) {
                 addrScore = 0.20;
                 detectedAddress = addrData.address;
                 sessionStorage.setItem('recent_address_' + createdVerifyId, addrData.address);
