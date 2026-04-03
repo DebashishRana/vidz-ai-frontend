@@ -245,13 +245,13 @@
                             </div>
 
                             <div style="margin-bottom: 24px;">
-                                <p style="font-size: 11px; color: #9ca3af; margin: 0 0 6px 0; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">Status</p>
-                                <div id="verificationStatus" style="display: inline-block; padding: 8px 14px; border-radius: 20px; font-size: 13px; font-weight: 600; background: #fee2e2; color: #dc2626;">Review Required</div>
+                                <p style="font-size: 11px; color: #9ca3af; margin: 0 0 6px 0; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">Detected Address</p>
+                                <p id="extractedAddress" style="font-size: 13px; color: #374151; margin: 0; line-height: 1.6; max-height: 100px; overflow-y: auto;">Not detected</p>
                             </div>
 
                             <div style="margin-bottom: 24px;">
-                                <p style="font-size: 11px; color: #9ca3af; margin: 0 0 6px 0; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">Detected Address</p>
-                                <p id="extractedAddress" style="font-size: 13px; color: #374151; margin: 0; line-height: 1.6; max-height: 100px; overflow-y: auto;">Not detected</p>
+                                <p style="font-size: 11px; color: #9ca3af; margin: 0 0 6px 0; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">Status</p>
+                                <div id="verificationStatus" style="display: inline-block; padding: 8px 14px; border-radius: 20px; font-size: 13px; font-weight: 600; background: #fee2e2; color: #dc2626;">Review Required</div>
                             </div>
                         </div>
 
@@ -324,7 +324,34 @@
     </script>
 
 <script>
-const BACKEND_URL = 'https://ekyc-backend-750223193485.asia-south2.run.app/api/v1';
+const RAW_API_BASE = localStorage.getItem('API_BASE_URL') || 'http://localhost:8000';
+
+function normalizeBaseUrl(url) {
+    return (url || '').trim().replace(/\/+$/, '');
+}
+
+const BASE_URL = normalizeBaseUrl(RAW_API_BASE);
+const API_V1_BASE = BASE_URL.endsWith('/api/v1') ? BASE_URL : `${BASE_URL}/api/v1`;
+const LEGACY_BASE = BASE_URL.endsWith('/api/v1') ? BASE_URL.replace(/\/api\/v1$/, '') : BASE_URL;
+
+async function postFormWithFallback(v1Path, legacyPath, formData) {
+    const v1Url = `${API_V1_BASE}${v1Path}`;
+    const v1Res = await fetch(v1Url, {
+        method: 'POST',
+        body: formData
+    });
+
+    if (v1Res.status !== 404) {
+        return { response: v1Res, url: v1Url, mode: 'api_v1' };
+    }
+
+    const legacyUrl = `${LEGACY_BASE}${legacyPath}`;
+    const legacyRes = await fetch(legacyUrl, {
+        method: 'POST',
+        body: formData
+    });
+    return { response: legacyRes, url: legacyUrl, mode: 'legacy' };
+}
 
 document.getElementById('startBtn').addEventListener('click', async () => {
     const idFile = document.getElementById('idDocument').files[0];
@@ -355,10 +382,9 @@ document.getElementById('startBtn').addEventListener('click', async () => {
         let formDataDocs = new FormData();
         formDataDocs.append("file", idFile);
 
-        const docRes = await fetch(`${BACKEND_URL}/verify-full`, {
-            method: "POST",
-            body: formDataDocs
-        });
+        const docCall = await postFormWithFallback('/verify-full', '/verify-full', formDataDocs);
+        const docRes = docCall.response;
+        console.log('verify-full URL used:', docCall.url, 'mode:', docCall.mode);
         
         console.log('API Response status:', docRes.status);
         
@@ -437,10 +463,9 @@ document.getElementById('startBtn').addEventListener('click', async () => {
             formDataFace.append("id_photo", idFile);
             formDataFace.append("selfie", selfieFile);
 
-            const faceRes = await fetch(`${BACKEND_URL}/verify-face`, {
-                method: "POST",
-                body: formDataFace
-            });
+            const faceCall = await postFormWithFallback('/verify-face', '/verify-face', formDataFace);
+            const faceRes = faceCall.response;
+            console.log('verify-face URL used:', faceCall.url, 'mode:', faceCall.mode);
             const faceData = await faceRes.json();
 
             if (faceRes.ok && faceData.match) {
@@ -461,15 +486,13 @@ document.getElementById('startBtn').addEventListener('click', async () => {
         formDataAddress.append("file", idFile);
         let addrScore = 0;
 
-        const addrRes = await fetch(`${BACKEND_URL}/detect-address`, {
-            method: "POST",
-            body: formDataAddress
-        });
+        const addrCall = await postFormWithFallback('/detect-address', '/detect/address', formDataAddress);
+        const addrRes = addrCall.response;
+        console.log('detect-address URL used:', addrCall.url, 'mode:', addrCall.mode);
 
         if (addrRes.ok) {
             const addrData = await addrRes.json();
-            const addressSuccess = (addrData.status === 'success' || addrData.success === true) && !!addrData.address;
-            if (addressSuccess) {
+            if (addrData.status === 'success' && addrData.address) {
                 addrScore = 0.20;
                 detectedAddress = addrData.address;
                 sessionStorage.setItem('recent_address_' + createdVerifyId, addrData.address);
@@ -623,11 +646,28 @@ async function saveVerificationRecord(verifyId, docType, score, status, address,
             verification_details: verificationDetails
         };
 
-        const response = await fetch(`${BACKEND_URL}/save-verification`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
+        const saveCandidates = [
+            `${API_V1_BASE}/save-verification`,
+            `${LEGACY_BASE}/save-verification`
+        ];
+
+        let response = null;
+        for (const url of saveCandidates) {
+            const attempted = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            if (attempted.status !== 404) {
+                response = attempted;
+                break;
+            }
+        }
+
+        if (!response) {
+            console.error('Failed to save verification record: no compatible endpoint found');
+            return;
+        }
 
         if (response.ok) {
             const data = await response.json();
