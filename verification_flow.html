@@ -336,13 +336,18 @@ const LEGACY_BASE = BASE_URL.endsWith('/api/v1') ? BASE_URL.replace(/\/api\/v1$/
 
 async function postFormWithFallback(v1Path, legacyPath, formData) {
     const v1Url = `${API_V1_BASE}${v1Path}`;
-    const v1Res = await fetch(v1Url, {
-        method: 'POST',
-        body: formData
-    });
+    try {
+        const v1Res = await fetch(v1Url, {
+            method: 'POST',
+            body: formData
+        });
 
-    if (v1Res.status !== 404) {
-        return { response: v1Res, url: v1Url, mode: 'api_v1' };
+        // Keep api/v1 response for success and client-side validation errors.
+        if (v1Res.ok || (v1Res.status !== 404 && v1Res.status < 500)) {
+            return { response: v1Res, url: v1Url, mode: 'api_v1' };
+        }
+    } catch (_) {
+        // Network/CORS failures should attempt legacy endpoint as fallback.
     }
 
     const legacyUrl = `${LEGACY_BASE}${legacyPath}`;
