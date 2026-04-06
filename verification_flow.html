@@ -415,38 +415,79 @@
     </script>
 
 <script>
-const RAW_API_BASE = localStorage.getItem('API_BASE_URL') || 'http://localhost:8000';
+const RAW_API_BASE = localStorage.getItem('API_BASE_URL') || '';
 
-function normalizeBaseUrl(url) {
-    return (url || '').trim().replace(/\/+$/, '');
+function sanitizeBaseUrl(url) {
+    let value = (url || '').trim();
+    // Handle accidental quoted values persisted in localStorage.
+    value = value.replace(/^['"]+|['"]+$/g, '');
+    value = value.replace(/\/+$/, '');
+    value = value.replace(/\/api\/v1$/, '');
+    return value;
 }
 
-const BASE_URL = normalizeBaseUrl(RAW_API_BASE);
-const API_V1_BASE = BASE_URL.endsWith('/api/v1') ? BASE_URL : `${BASE_URL}/api/v1`;
-const LEGACY_BASE = BASE_URL.endsWith('/api/v1') ? BASE_URL.replace(/\/api\/v1$/, '') : BASE_URL;
+function buildBaseCandidates() {
+    const configured = sanitizeBaseUrl(RAW_API_BASE);
+    const defaults = [
+        configured,
+        'https://ekyc-backend-5jmu4hau4a-em.a.run.app',
+        'https://ekyc-backend-750223193485.asia-south2.run.app',
+        'http://localhost:8000'
+    ];
+
+    const unique = [];
+    for (const base of defaults) {
+        if (!base || unique.includes(base)) {
+            continue;
+        }
+        unique.push(base);
+    }
+    return unique;
+}
+
+const BASE_CANDIDATES = buildBaseCandidates();
+const PRIMARY_BASE = BASE_CANDIDATES[0];
+const API_V1_BASE = `${PRIMARY_BASE}/api/v1`;
+const LEGACY_BASE = PRIMARY_BASE;
 
 async function postFormWithFallback(v1Path, legacyPath, formData) {
-    const v1Url = `${API_V1_BASE}${v1Path}`;
-    try {
-        const v1Res = await fetch(v1Url, {
-            method: 'POST',
-            body: formData
-        });
+    let lastError = null;
 
-        // Keep api/v1 response for success and client-side validation errors.
-        if (v1Res.ok || (v1Res.status !== 404 && v1Res.status < 500)) {
-            return { response: v1Res, url: v1Url, mode: 'api_v1' };
+    for (const base of BASE_CANDIDATES) {
+        const v1Url = `${base}/api/v1${v1Path}`;
+        try {
+            const v1Res = await fetch(v1Url, {
+                method: 'POST',
+                body: formData
+            });
+
+            // Keep api/v1 response for success and client-side validation errors.
+            if (v1Res.ok || (v1Res.status !== 404 && v1Res.status < 500)) {
+                return { response: v1Res, url: v1Url, mode: 'api_v1' };
+            }
+        } catch (error) {
+            lastError = error;
         }
-    } catch (_) {
-        // Network/CORS failures should attempt legacy endpoint as fallback.
+
+        const legacyUrl = `${base}${legacyPath}`;
+        try {
+            const legacyRes = await fetch(legacyUrl, {
+                method: 'POST',
+                body: formData
+            });
+
+            if (legacyRes.ok || legacyRes.status !== 404) {
+                return { response: legacyRes, url: legacyUrl, mode: 'legacy' };
+            }
+        } catch (error) {
+            lastError = error;
+        }
     }
 
-    const legacyUrl = `${LEGACY_BASE}${legacyPath}`;
-    const legacyRes = await fetch(legacyUrl, {
-        method: 'POST',
-        body: formData
-    });
-    return { response: legacyRes, url: legacyUrl, mode: 'legacy' };
+    if (lastError) {
+        throw lastError;
+    }
+    throw new Error('No compatible backend endpoint found');
 }
 
 let currentMode = 'single';
@@ -766,21 +807,26 @@ async function saveVerificationRecord(verifyId, docType, score, status, address,
             verification_details: verificationDetails
         };
 
-        const saveCandidates = [
-            `${API_V1_BASE}/save-verification`,
-            `${LEGACY_BASE}/save-verification`
-        ];
+        const saveCandidates = [];
+        for (const base of BASE_CANDIDATES) {
+            saveCandidates.push(`${base}/api/v1/save-verification`);
+            saveCandidates.push(`${base}/save-verification`);
+        }
 
         let response = null;
         for (const url of saveCandidates) {
-            const attempted = await fetch(url, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
-            if (attempted.status !== 404) {
-                response = attempted;
-                break;
+            try {
+                const attempted = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                if (attempted.status !== 404) {
+                    response = attempted;
+                    break;
+                }
+            } catch (_) {
+                // Try next backend candidate.
             }
         }
 
