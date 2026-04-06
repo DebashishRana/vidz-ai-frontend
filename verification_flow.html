@@ -423,16 +423,21 @@ function sanitizeBaseUrl(url) {
     value = value.replace(/^['"]+|['"]+$/g, '');
     value = value.replace(/\/+$/, '');
     value = value.replace(/\/api\/v1$/, '');
+    // Filter out old/stale backend URLs that are known to be down
+    if (value.includes('ekyc-backend-750223193485')) {
+        return '';
+    }
     return value;
 }
 
 function buildBaseCandidates() {
     const configured = sanitizeBaseUrl(RAW_API_BASE);
+    // Prioritize new working URL first, then fallbacks
     const defaults = [
-        configured,
         'https://ekyc-backend-5jmu4hau4a-em.a.run.app',
-        'https://ekyc-backend-750223193485.asia-south2.run.app',
-        'http://localhost:8000'
+        configured,
+        'http://localhost:8000',
+        'https://ekyc-backend-750223193485.asia-south2.run.app'
     ];
 
     const unique = [];
@@ -442,6 +447,12 @@ function buildBaseCandidates() {
         }
         unique.push(base);
     }
+    
+    // Clear old stale URLs from localStorage to prevent reuse
+    if (configured.includes('750223193485')) {
+        localStorage.removeItem('API_BASE_URL');
+    }
+    
     return unique;
 }
 
@@ -452,8 +463,9 @@ const LEGACY_BASE = PRIMARY_BASE;
 
 async function postFormWithFallback(v1Path, legacyPath, formData) {
     let lastError = null;
+    const filteredCandidates = BASE_CANDIDATES.filter(b => !b.includes('750223193485'));
 
-    for (const base of BASE_CANDIDATES) {
+    for (const base of filteredCandidates) {
         const v1Url = `${base}/api/v1${v1Path}`;
         try {
             const v1Res = await fetch(v1Url, {
